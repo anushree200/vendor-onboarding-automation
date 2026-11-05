@@ -31,7 +31,7 @@ def test_fuzzy_name_match_parses_valid_llm_json(monkeypatch) -> None:
     monkeypatch.setattr(
         llm,
         "call_llm",
-        lambda prompt: json.dumps(
+        lambda prompt, **kwargs: json.dumps(
             {
                 "match": True,
                 "confidence": 0.91,
@@ -45,11 +45,67 @@ def test_fuzzy_name_match_parses_valid_llm_json(monkeypatch) -> None:
     assert result["source"] == "llm"
 
 
+def test_fuzzy_name_match_parses_fenced_json_and_percentage_confidence(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        llm,
+        "call_llm",
+        lambda prompt, **kwargs: (
+            '```json\n{"match": false, "confidence": "41", '
+            '"explanation": "The names appear unrelated."}\n```'
+        ),
+    )
+    result = fuzzy_name_match("Sunrise Traders", "Rajesh Kumar Enterprises")
+    assert result == {
+        "match": False,
+        "confidence": 0.41,
+        "explanation": "The names appear unrelated.",
+        "source": "llm",
+    }
+
+
+def test_fuzzy_name_match_parses_fractional_string_confidence(monkeypatch) -> None:
+    monkeypatch.setattr(
+        llm,
+        "call_llm",
+        lambda prompt, **kwargs: json.dumps(
+            {
+                "match": True,
+                "confidence": "0.91",
+                "explanation": "The names describe the same entity.",
+            }
+        ),
+    )
+    result = fuzzy_name_match("International Business Machines", "IBM")
+    assert result["confidence"] == 0.91
+    assert result["source"] == "llm"
+
+
 def test_fuzzy_name_match_invalid_response_uses_fallback(monkeypatch) -> None:
-    monkeypatch.setattr(llm, "call_llm", lambda prompt: "not json")
+    monkeypatch.setattr(llm, "call_llm", lambda prompt, **kwargs: "not json")
     result = fuzzy_name_match("Sunrise Traders", "Rajesh Kumar Enterprises")
     assert result["source"] == "fallback"
     assert result["match"] is False
+
+
+@pytest.mark.parametrize(
+    ("response", "reason"),
+    [
+        ('{"match": true, "confidence": "unclear", "explanation": "x"}', "not numeric"),
+        ('{"match": true, "confidence": 0.8}', "explanation"),
+        ('{"match": true, "confidence": 140, "explanation": "x"}', "outside"),
+    ],
+)
+def test_fuzzy_name_match_logs_invalid_response_reason(
+    monkeypatch, caplog, response, reason
+) -> None:
+    monkeypatch.setattr(
+        llm, "call_llm", lambda prompt, **kwargs: response
+    )
+    result = fuzzy_name_match("Sunrise Traders", "Rajesh Kumar Enterprises")
+    assert result["source"] == "fallback"
+    assert reason in caplog.text
 
 
 def test_call_llm_returns_none_without_an_api_key(monkeypatch) -> None:
@@ -61,9 +117,11 @@ def test_call_llm_configures_gemini_timeout_and_single_attempt(monkeypatch) -> N
     import google.genai
 
     client_options = {}
+    generation_options = {}
 
     class FakeModels:
         def generate_content(self, **kwargs):
+            generation_options.update(kwargs)
             return SimpleNamespace(text="ok")
 
     class FakeClient:
@@ -82,10 +140,13 @@ def test_call_llm_configures_gemini_timeout_and_single_attempt(monkeypatch) -> N
     )
     monkeypatch.setattr(google.genai, "Client", FakeClient)
 
-    assert llm.call_llm("test prompt") == "ok"
+    assert llm.call_llm("test prompt", json_response=True) == "ok"
     http_options = client_options["http_options"]
     assert http_options.timeout == 10_000
     assert http_options.retry_options.attempts == 1
+    config = generation_options["config"]
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema.required == ["match", "confidence", "explanation"]
 
 
 def test_call_llm_disabled_skips_provider(monkeypatch) -> None:
@@ -244,6 +305,8 @@ def test_draft_vendor_email_falls_back_and_lists_all_issues(monkeypatch) -> None
     assert "- Please send bank proof." in email
     assert "- Please confirm the tax ID." in email
     assert "To continue, please provide:" in email
+    assert email.endswith("Regards,\nProcurement Team")
+    assert "[Your Name]" not in email
 
 
 def test_rejected_email_explains_application_cannot_proceed(monkeypatch) -> None:
@@ -258,6 +321,8 @@ def test_rejected_email_explains_application_cannot_proceed(monkeypatch) -> None
     assert "You may resubmit it with corrected details." in email
     assert "To continue, please provide" not in email
     assert "- Please correct the tax ID." in email
+    assert email.endswith("Regards,\nProcurement Team")
+    assert "[Your Name]" not in email
 
 
 def test_llm_rejected_email_prompt_requires_rejection_wording(monkeypatch) -> None:
@@ -268,11 +333,26 @@ def test_llm_rejected_email_prompt_requires_rejection_wording(monkeypatch) -> No
         return "Rejected email"
 
     monkeypatch.setattr(llm, "call_llm", fake_call_llm)
-    assert draft_vendor_email(
+    email = draft_vendor_email(
         "Example Vendor", "Asha Patel", "REJECTED", ["Fix the tax ID."]
-    ) == "Rejected email"
+    )
+    assert email.startswith("Rejected email")
+    assert email.endswith("Regards,\nProcurement Team")
+    assert "[Your Name]" not in email
     assert "cannot proceed as submitted" in prompts[0]
     assert "do not say 'To continue, please provide'" in prompts[0]
+    assert "signed exactly 'Procurement Team'" in prompts[0]
+
+
+def test_llm_email_signature_replaces_name_placeholder(monkeypatch) -> None:
+    monkeypatch.setattr(
+        llm,
+        "call_llm",
+        lambda prompt: "Hello,\n\nDetails here.\n\nRegards,\n[Your Name]",
+    )
+    email = draft_vendor_email("Example Vendor", "Asha Patel", "PENDING", ["Item"])
+    assert email.endswith("Regards,\nProcurement Team")
+    assert "[Your Name]" not in email
 
 
 def test_name_match_rule_classifies_low_confidence_different_names(
