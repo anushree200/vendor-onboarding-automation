@@ -1,29 +1,90 @@
 import json
 import logging
 from difflib import SequenceMatcher
+from itertools import islice
+import threading
+import time
 from typing import Any
 
 from config import get_setting
 from rules import normalize_company_name
 
 
-_TIMEOUT_SECONDS = 15
+_TIMEOUT_MILLISECONDS = 10_000
+_CIRCUIT_BREAKER_SECONDS = 120
 _PROVIDER_MODELS = {
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-3.8-flash",
     "openai": "gpt-4o-mini",
     "anthropic": "claude-3-5-haiku-latest",
 }
 _LOGGER = logging.getLogger(__name__)
+_circuit_lock = threading.Lock()
+_circuit_open_until = 0.0
 
 
 def _setting(name: str, default: str | None = None) -> str | None:
     return get_setting(name, default)
 
 
+def _safe_error_message(error: Exception, api_key: str | None) -> str:
+    message = str(error)
+    return message.replace(api_key, "[REDACTED]") if api_key else message
+
+
+def _is_not_found_error(error: Exception) -> bool:
+    status_code = getattr(error, "code", None) or getattr(
+        error, "status_code", None
+    )
+    message = str(error).casefold()
+    return status_code == 404 or "404" in message or "not_found" in message
+
+
+def _log_gemini_models(client: Any, api_key: str | None) -> None:
+    try:
+        models = islice(client.models.list(), 10)
+        names = [
+            str(model.name)
+            for model in models
+            if getattr(model, "name", None)
+        ]
+        _LOGGER.error("First available Gemini model names: %s", names)
+    except Exception as error:
+        _LOGGER.error(
+            "Could not list Gemini models after 404 (%s): %s",
+            type(error).__name__,
+            _safe_error_message(error, api_key),
+        )
+
+
+def _llm_enabled() -> bool:
+    value = (_setting("LLM_ENABLED", "true") or "true").strip().casefold()
+    return value not in {"false", "0", "no", "off"}
+
+
+def _circuit_is_open() -> bool:
+    with _circuit_lock:
+        return time.monotonic() < _circuit_open_until
+
+
+def _open_circuit() -> None:
+    global _circuit_open_until
+    with _circuit_lock:
+        _circuit_open_until = time.monotonic() + _CIRCUIT_BREAKER_SECONDS
+
+
 def call_llm(prompt: str) -> str | None:
     """Make one provider SDK call, returning None when it cannot complete."""
     api_key: str | None = None
+    provider = "gemini"
+    client: Any = None
     try:
+        if not _llm_enabled():
+            _LOGGER.info("LLM call skipped: LLM_ENABLED is false")
+            return None
+        if _circuit_is_open():
+            _LOGGER.info("LLM call skipped: circuit breaker is open")
+            return None
+
         api_key = _setting("LLM_API_KEY")
         provider = (_setting("LLM_PROVIDER", "gemini") or "gemini").strip().casefold()
         if not api_key or provider not in _PROVIDER_MODELS:
@@ -42,20 +103,23 @@ def call_llm(prompt: str) -> str | None:
 
             client = genai.Client(
                 api_key=api_key,
-                http_options=types.HttpOptions(timeout=_TIMEOUT_SECONDS * 1000),
+                http_options=types.HttpOptions(
+                    timeout=_TIMEOUT_MILLISECONDS,
+                    retry_options=types.HttpRetryOptions(attempts=1),
+                ),
             )
             response = client.models.generate_content(
                 model=model,
                 contents=prompt,
             )
-            return response.text
+            text = response.text
 
-        if provider == "openai":
+        elif provider == "openai":
             from openai import OpenAI
 
             client = OpenAI(
                 api_key=api_key,
-                timeout=_TIMEOUT_SECONDS,
+                timeout=_TIMEOUT_MILLISECONDS / 1000,
                 max_retries=0,
             )
             response = client.chat.completions.create(
@@ -63,34 +127,39 @@ def call_llm(prompt: str) -> str | None:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
             )
-            return response.choices[0].message.content
+            text = response.choices[0].message.content
 
-        from anthropic import Anthropic
+        else:
+            from anthropic import Anthropic
 
-        client = Anthropic(
-            api_key=api_key,
-            timeout=_TIMEOUT_SECONDS,
-            max_retries=0,
-        )
-        response = client.messages.create(
-            model=model,
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return "".join(
-            block.text
-            for block in response.content
-            if getattr(block, "type", None) == "text"
-        )
+            client = Anthropic(
+                api_key=api_key,
+                timeout=_TIMEOUT_MILLISECONDS / 1000,
+                max_retries=0,
+            )
+            response = client.messages.create(
+                model=model,
+                max_tokens=300,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = "".join(
+                block.text
+                for block in response.content
+                if getattr(block, "type", None) == "text"
+            )
+
+        if not isinstance(text, str) or not text.strip():
+            raise RuntimeError("LLM provider returned an empty response.")
+        return text
     except Exception as error:
-        message = str(error)
-        if api_key:
-            message = message.replace(api_key, "[REDACTED]")
+        _open_circuit()
         _LOGGER.error(
             "LLM call failed (%s): %s",
             type(error).__name__,
-            message,
+            _safe_error_message(error, api_key),
         )
+        if provider == "gemini" and client is not None and _is_not_found_error(error):
+            _log_gemini_models(client, api_key)
         return None
 
 
@@ -173,11 +242,20 @@ def _fallback_vendor_email(
     issue_lines = "\n".join(f"- {issue}" for issue in clean_issues)
     if not issue_lines:
         issue_lines = "- Please contact our procurement team for next steps."
+    if status == "REJECTED":
+        next_steps = (
+            "We can't proceed with the application as submitted. "
+            "You may resubmit it with corrected details."
+        )
+        issue_section = f"Items to correct:\n{issue_lines}"
+    else:
+        next_steps = "To continue, please provide:"
+        issue_section = issue_lines
     return (
         f"{greeting}\n\n"
         f"Thank you for submitting {vendor_name} for vendor onboarding. "
-        f"Your application is currently {status}.\n\n"
-        f"To continue, please provide:\n{issue_lines}\n\n"
+        f"Your application is currently {status}. {next_steps}\n\n"
+        f"{issue_section}\n\n"
         "Please reply to this email with the requested information. "
         "Thank you for your help.\n\n"
         "Regards,\nProcurement Team"
@@ -197,6 +275,10 @@ def draft_vendor_email(
             "Use plain language without jargon. Explain the current status and "
             "include a bullet list containing exactly the supplied items needed; "
             "do not add requirements. Return only the email text.\n"
+            "If the status is REJECTED, clearly say the application cannot "
+            "proceed as submitted and the vendor may resubmit with corrected "
+            "details; do not say 'To continue, please provide'. If the status "
+            "is PENDING, use 'To continue, please provide' before the items.\n"
             f"Vendor: {vendor_name}\n"
             f"Contact: {contact_name}\n"
             f"Status: {status}\n"

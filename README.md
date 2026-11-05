@@ -93,7 +93,7 @@ describes country coverage, required documents, and decision behavior.
 
 The app requires an `APP_PASSWORD` before exposing submission data or
 dashboard controls. The app reads `APP_PASSWORD`, `LLM_API_KEY`, `LLM_PROVIDER`,
-`LLM_MODEL`, and `DATA_ENCRYPTION_KEY` from the environment or `.env`.
+`LLM_ENABLED`, `LLM_MODEL`, and `DATA_ENCRYPTION_KEY` from the environment or `.env`.
 Environment variables take precedence; if unavailable, the app reads those
 settings from Streamlit secrets. For Community Cloud, add values in the app's
 **Settings → Secrets** using TOML:
@@ -102,9 +102,15 @@ settings from Streamlit secrets. For Community Cloud, add values in the app's
 APP_PASSWORD = "choose-a-strong-app-password"
 LLM_API_KEY = "your-provider-key"
 LLM_PROVIDER = "gemini"
+LLM_ENABLED = "true"
 DATA_ENCRYPTION_KEY = "generated-fernet-key"
 # LLM_MODEL = "provider-model-name"
 ```
+
+Gemini requests use a 10-second timeout and one attempt (the API rejects
+deadlines below 10 seconds). After a provider failure, the app skips LLM calls
+for 120 seconds and immediately uses its local fallbacks. Set
+`LLM_ENABLED = "false"` to disable provider calls entirely.
 
 Generate an encryption key locally with:
 
