@@ -1,0 +1,18 @@
+{
+  "company_name": "Sunrise Traders",
+  "country": "IN",
+  "tax_id": "24AAEFS2468J1Z4",
+  "registered_address": "31 Ashram Road, Ahmedabad, Gujarat 380009",
+  "contact_name": "Rajesh Kumar",
+  "contact_email": "rajesh.kumar@sunrise.example",
+  "bank_account_holder": "Rajesh Kumar Enterprises",
+  "bank_name": "Example Western Bank",
+  "bank_account_number": "849205716338",
+  "bank_country": "IN",
+  "ifsc_or_routing": "EXWB0000641",
+  "documents": [
+    "incorporation_cert",
+    "tax_registration",
+    "bank_proof"
+  ]
+}

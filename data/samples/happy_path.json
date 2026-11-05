@@ -1,0 +1,18 @@
+{
+  "company_name": "Maple Leaf Packaging Pvt Ltd",
+  "country": "IN",
+  "tax_id": "29ABCDE1234F1Z5",
+  "registered_address": "42 Residency Road, Bengaluru, Karnataka 560025",
+  "contact_name": "Ananya Rao",
+  "contact_email": "ananya.rao@mapleleaf.example",
+  "bank_account_holder": "Maple Leaf Packaging Private Limited",
+  "bank_name": "Example National Bank",
+  "bank_account_number": "614209873512",
+  "bank_country": "IN",
+  "ifsc_or_routing": "EXNB0001234",
+  "documents": [
+    "incorporation_cert",
+    "tax_registration",
+    "bank_proof"
+  ]
+}

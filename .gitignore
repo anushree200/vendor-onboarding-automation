@@ -1,0 +1,12 @@
+.env
+.venv/
+venv/
+.audit-venv/
+vendor_runs.sqlite3
+*.db
+*.sqlite
+*.sqlite3
+.app-data.key
+.streamlit/secrets.toml
+__pycache__/
+.pytest_cache/

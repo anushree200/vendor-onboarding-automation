@@ -1,0 +1,18 @@
+{
+  "company_name": "Acme Pvt Ltd",
+  "country": "IN",
+  "tax_id": "27AACCA1234B1Z7",
+  "registered_address": "18 MIDC Road, Pune, Maharashtra 411019",
+  "contact_name": "Kavita Shah",
+  "contact_email": "kavita.shah@acme.example",
+  "bank_account_holder": "ACME PRIVATE LIMITED",
+  "bank_name": "Example Commerce Bank",
+  "bank_account_number": "482910375614",
+  "bank_country": "IN",
+  "ifsc_or_routing": "EXCB0000412",
+  "documents": [
+    "incorporation_cert",
+    "tax_registration",
+    "bank_proof"
+  ]
+}

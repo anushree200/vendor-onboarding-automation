@@ -1,0 +1,18 @@
+{
+  "company_name": "Redwood Components Pvt Ltd",
+  "country": "IN",
+  "tax_id": "12-3456789",
+  "registered_address": "7 Industrial Estate, Ahmedabad, Gujarat 380015",
+  "contact_name": "Rohan Mehta",
+  "contact_email": "rohan.mehta@redwood.example",
+  "bank_account_holder": "Redwood Components Private Limited",
+  "bank_name": "Example National Bank",
+  "bank_account_number": "507318642901",
+  "bank_country": "IN",
+  "ifsc_or_routing": "EXNB0000789",
+  "documents": [
+    "incorporation_cert",
+    "tax_registration",
+    "bank_proof"
+  ]
+}
