@@ -1,4 +1,5 @@
 import json
+import logging
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -12,6 +13,7 @@ _PROVIDER_MODELS = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-3-5-haiku-latest",
 }
+_LOGGER = logging.getLogger(__name__)
 
 
 def _setting(name: str, default: str | None = None) -> str | None:
@@ -20,10 +22,17 @@ def _setting(name: str, default: str | None = None) -> str | None:
 
 def call_llm(prompt: str) -> str | None:
     """Make one provider SDK call, returning None when it cannot complete."""
+    api_key: str | None = None
     try:
         api_key = _setting("LLM_API_KEY")
         provider = (_setting("LLM_PROVIDER", "gemini") or "gemini").strip().casefold()
         if not api_key or provider not in _PROVIDER_MODELS:
+            _LOGGER.warning(
+                "LLM call skipped: %s",
+                "LLM_API_KEY is not configured"
+                if not api_key
+                else f"unsupported LLM_PROVIDER {provider!r}",
+            )
             return None
 
         model = _setting("LLM_MODEL", _PROVIDER_MODELS[provider])
@@ -73,7 +82,15 @@ def call_llm(prompt: str) -> str | None:
             for block in response.content
             if getattr(block, "type", None) == "text"
         )
-    except Exception:
+    except Exception as error:
+        message = str(error)
+        if api_key:
+            message = message.replace(api_key, "[REDACTED]")
+        _LOGGER.error(
+            "LLM call failed (%s): %s",
+            type(error).__name__,
+            message,
+        )
         return None
 
 

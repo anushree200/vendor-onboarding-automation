@@ -56,6 +56,16 @@ To print CLI progress for a sample:
 python pipeline.py data/samples/happy_path.json
 ```
 
+To make one real Gemini connectivity check using `LLM_API_KEY` from the local
+`.env` file and print either the response or the full sanitized exception:
+
+```powershell
+python test_llm.py
+```
+
+This diagnostic makes a provider request and should only be run with a key you
+control. It never prints the key.
+
 ## Demo features and edge cases
 
 The **Run** tab accepts a sample, form submission, or uploaded JSON. A pending

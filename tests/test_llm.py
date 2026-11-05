@@ -51,6 +51,34 @@ def test_call_llm_returns_none_without_an_api_key(monkeypatch) -> None:
     assert llm.call_llm("test prompt") is None
 
 
+def test_call_llm_logs_provider_exception_without_exposing_key(
+    monkeypatch, caplog
+) -> None:
+    import google.genai
+
+    api_key = "private-test-key"
+
+    class BrokenModels:
+        def generate_content(self, **kwargs):
+            raise RuntimeError(f"request failed with {api_key}")
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.models = BrokenModels()
+
+    monkeypatch.setattr(llm, "_setting", lambda name, default=None: {
+        "LLM_API_KEY": api_key,
+        "LLM_PROVIDER": "gemini",
+        "LLM_MODEL": "test-model",
+    }.get(name, default))
+    monkeypatch.setattr(google.genai, "Client", FakeClient)
+
+    assert llm.call_llm("test prompt") is None
+    assert "RuntimeError" in caplog.text
+    assert "request failed" in caplog.text
+    assert api_key not in caplog.text
+
+
 def test_settings_read_streamlit_secrets_and_prefer_environment(monkeypatch) -> None:
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.setitem(
